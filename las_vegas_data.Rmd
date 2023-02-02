@@ -1,0 +1,190 @@
+```{r, include=FALSE, message=FALSE}
+library(tidyverse)
+library(ggrepel)
+library(smodels)
+library(stringi)
+library(Matrix)
+library(glmnet)
+library(cleanNLP)
+library(magrittr)
+
+theme_set(theme_minimal())
+options(dplyr.summarise.inform = FALSE)
+```
+
+# Load the Data
+
+```{r, message=FALSE}
+dname <- "las-vegas"  # put the name assigned to your group here
+
+url_base <- "./data-yelp/class_unsup"
+f_corpus <- file.path("data", sprintf("%s.csv.gz", dname))
+f_tokens <- file.path("data", sprintf("%s_token.csv.gz", dname))
+u_corpus <- sprintf("%s/%s.csv.gz", url_base, dname)
+u_tokens <- sprintf("%s/%s_token.csv.gz", url_base, dname)
+if (!file.exists(f_corpus)) { download.file(u_corpus, f_corpus) }
+if (!file.exists(f_tokens)) { download.file(u_tokens, f_tokens) }
+
+yelp <- read_csv(f_corpus)
+token <- read_csv(f_tokens)
+yelp
+token
+```
+
+# Project Code
+```{r}
+token %>%
+  left_join(select(yelp, doc_id, stars, gender, user_name, biz_category)) %>%
+  filter(biz_category == "Casinos") %>%
+  mutate(newvar = paste0(stars, " ", gender)) %>%
+  sm_text_tfidf(doc_var = "newvar",token_var = "lemma") %>%
+  group_by(doc_id) %>%
+  arrange(desc(tfidf)) %>%
+  slice_head(n=10) %>%
+  summarize(tokens = paste(token,collapse = "; ")) %>%
+  print.data.frame()
+```
+```{r}
+token %>%
+  left_join(select(yelp, doc_id, stars, gender, user_name, biz_category)) %>%
+  mutate(newvar = paste0(gender, " ", biz_category)) %>%
+  sm_text_tfidf(doc_var = "newvar",token_var = "lemma") %>%
+  group_by(doc_id) %>%
+  arrange(desc(tfidf)) %>%
+  slice_head(n=10) %>%
+  summarize(tokens = paste(token,collapse = "; ")) %>%
+  print.data.frame()
+```
+```{r}
+token %>%
+  left_join(select(yelp, doc_id, stars, gender, user_name, biz_category)) %>%
+  mutate(newvar = paste0(stars, " ", biz_category)) %>%
+  sm_text_tfidf(doc_var = "newvar",token_var = "lemma") %>%
+  group_by(doc_id) %>%
+  arrange(desc(tfidf)) %>%
+  slice_head(n=10) %>%
+  summarize(tokens = paste(token,collapse = "; ")) %>%
+  print.data.frame()
+```
+```{r}
+set.seed(5)
+clusters <- token %>%
+  cnlp_utils_tf(
+    doc_set = unique(yelp$user_name),
+    min_df = 0.001,
+    max_df = 1.0,
+    max_features = 10000,
+    doc_var = "user_name",
+    token_var = "token"
+  ) %>%
+  sm_tidy_pca(n = 2) %>%
+  sm_kmeans(clusters = 5)
+
+clusters %>%
+  ggplot(aes(x = v1, y = v2)) +
+    geom_point(aes(color = factor(cluster))) +
+    geom_text_repel(
+      aes(label = document),
+      show.legend = FALSE,
+      max.overlaps = 20,
+      size = 2
+    ) +
+    labs(color = "Cluster Number") +
+    scale_color_viridis_d() +
+    theme_void()
+```
+```{r}
+set.seed(5)
+clusters <- yelp %>%
+  select(doc_id, lon, lat) %>%
+  sm_kmeans(clusters = 20, item_name = "doc_id") %>%
+  select(-lon, -lat)
+
+yelp %>%
+  #filter(biz_category == "Mexican" | biz_category == "Burgers" | biz_category == "Italian" | biz_category == "Chinese" | biz_category == "Casinos") %>%
+  filter(biz_category == "Resorts" | biz_category == "Casinos") %>%
+  filter(stars == 1 | stars == 2) %>%
+  ggplot(aes(lon, lat)) +
+    geom_point(aes(color = factor(biz_category)), show.legend = FALSE) +
+    labs(x = "Longitude", y = "Latitude", color = "Business Category")
+```
+```{r}
+set.seed(5)
+clusters <- yelp %>%
+  select(doc_id, lon, lat) %>%
+  sm_kmeans(clusters = 20, item_name = "doc_id") %>%
+  select(-lon, -lat)
+
+yelp %>%
+  #filter(biz_category == "Mexican" | biz_category == "Burgers" | biz_category == "Italian" | biz_category == "Chinese" | biz_category == "Casinos") %>%
+  filter(biz_category == "Resorts" | biz_category == "Casinos") %>%
+  filter(stars == 5 | stars == 4) %>%
+  ggplot(aes(lon, lat)) +
+    geom_point(aes(color = factor(biz_category)), show.legend = FALSE) +
+    labs(x = "Longitude", y = "Latitude", color = "Business Category")
+```
+```{r}
+set.seed(5)
+clusters <- yelp %>%
+  select(doc_id, lon, lat) %>%
+  sm_kmeans(clusters = 20, item_name = "doc_id") %>%
+  select(-lon, -lat)
+
+yelp %>%
+  left_join(clusters, by = "doc_id") %>%
+  #filter(biz_category == "Mexican" | biz_category == "Burgers" | biz_category == "Italian" | biz_category == "Chinese" | biz_category == "Casinos") %>%
+  filter(biz_category == "Resorts" | biz_category == "Casinos") %>%
+  filter(stars == 1 | stars == 2) %>%
+  ggplot(aes(lon, lat)) +
+    geom_point(aes(color = factor(cluster)), show.legend = TRUE) +
+    labs(x = "Longitude", y = "Latitude", color = "Business Category")
+table(clusters$cluster)[4] / sum(table(clusters$cluster))
+```
+```{r}
+set.seed(5)
+clusters <- yelp %>%
+  select(doc_id, lon, lat) %>%
+  sm_kmeans(clusters = 20, item_name = "doc_id") %>%
+  select(-lon, -lat)
+
+yelp %>%
+  left_join(clusters, by = "doc_id") %>%
+  #filter(biz_category == "Mexican" | biz_category == "Burgers" | biz_category == "Italian" | biz_category == "Chinese" | biz_category == "Casinos") %>%
+  filter(biz_category == "Resorts" | biz_category == "Casinos") %>%
+  filter(stars == 4 | stars == 5) %>%
+  ggplot(aes(lon, lat)) +
+    geom_point(aes(color = factor(cluster)), show.legend = TRUE) +
+    labs(x = "Longitude", y = "Latitude", color = "Business Category")
+table(clusters$cluster)[4] / sum(table(clusters$cluster))
+```
+```{r}
+token %>%
+  left_join(select(yelp, doc_id, stars, gender, user_name, biz_category)) %>%
+  filter(biz_category == "Casinos" | biz_category == "Resorts") %>%
+  mutate(newvar = paste0(stars, " ", gender)) %>%
+  sm_text_tfidf(doc_var = "newvar",token_var = "lemma") %>%
+  group_by(doc_id) %>%
+  arrange(desc(tfidf)) %>%
+  slice_head(n=10) %>%
+  summarize(tokens = paste(token,collapse = "; ")) %>%
+  print.data.frame()
+
+```
+```{r}
+yelp %>%
+  filter((biz_category == "Resorts" | biz_category == "Casinos") & gender == "female") %>%
+  select(stars) %>%
+  table() %>%
+  plot()
+
+```
+```{r}
+yelp %>%
+  filter((biz_category == "Resorts" | biz_category == "Casinos") & gender == "male") %>%
+  select(stars) %>%
+  table() %>%
+  plot()
+```
+
+
+

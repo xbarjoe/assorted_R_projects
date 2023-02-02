@@ -1,0 +1,405 @@
+```{r, include=FALSE, message=FALSE}
+library(tidyverse)
+library(ggrepel)
+library(smodels)
+library(stringi)
+library(Matrix)
+library(glmnet)
+library(cleanNLP)
+library(magrittr)
+
+theme_set(theme_minimal())
+options(dplyr.summarise.inform = FALSE)
+```
+
+# Load and Download the Data
+
+```{r, message=FALSE}
+dname <- "imdb_vs_extreme"  # put the name assigned to your group here
+
+url_base <- "./data-imdb/class"
+f_corpus <- file.path("data", sprintf("%s.csv.gz", dname))
+f_tokens <- file.path("data", sprintf("%s_token.csv.gz", dname))
+u_corpus <- sprintf("%s/%s.csv.gz", url_base, dname)
+u_tokens <- sprintf("%s/%s_token.csv.gz", url_base, dname)
+if (!file.exists(f_corpus)) { download.file(u_corpus, f_corpus) }
+if (!file.exists(f_tokens)) { download.file(u_tokens, f_tokens) }
+
+imdb <- read_csv(f_corpus) 
+token <- read_csv(f_tokens) 
+
+
+```
+```{r}
+
+```
+```{r}
+X <- token %>%
+  cnlp_utils_tf(
+    doc_set = imdb$doc_id,
+    min_df = 0.001,
+    max_df = 1.0,
+    max_features = 10000,
+    doc_var = "doc_id",
+    token_var = "lemma"
+  )
+X_train <- X[imdb$train_id == "train", ]
+y_train <- imdb$category[imdb$train_id == "train"]
+
+model <- cv.glmnet(
+  X_train,
+  y_train,
+  alpha = 0.9,
+  family = "multinomial",
+  nfolds = 3,
+  trace.it = TRUE,
+  relax = FALSE,
+  lambda.min.ratio = 0.01,
+  nlambda = 100
+)
+model <- cv.glmnet(
+  X_train,
+  y_train,
+  alpha = 0.9,
+  family = "multinomial",
+  nfolds = 3,
+  trace.it = TRUE,
+  relax = FALSE,
+  lambda.min.ratio = 0.01,
+  nlambda = 100
+)
+imdb %>%
+  mutate(pred = as.vector(predict(model, newx = X, type = "class"))) %>%
+  group_by(train_id) %>%
+  summarize(class_rate = mean(category == pred))
+
+temp <- coef(model, s = model$lambda[20])
+beta <- Reduce(cbind, temp)
+beta <- beta[apply(beta != 0, 1, any),]
+colnames(beta) <- names(temp)
+beta
+
+sm_kwic("ever", imdb$text, n = 15, ignore_case = TRUE, width = 30L)
+sm_kwic("pretty", imdb$text, n = 15, ignore_case = TRUE, width = 30L)
+
+
+imdb %>%
+  mutate(pred = as.vector(predict(model, newx = X, type = "class"))) %>%
+  filter(train_id == "valid") %>%
+  filter(pred != category) %>%
+  sample_n(size = 10) %>%
+  mutate(text = stri_sub(text, 1, 500)) %>%
+  mutate(response = sprintf("%s => %s \n %s\n", category, pred, text)) %>%
+  use_series(response) %>%
+  stri_split(fixed = "\n") %>%
+  unlist() %>%
+  stri_wrap(width = 79) %>%
+  cat(sep = "\n")
+```
+
+```{r}
+X <- token %>%
+  filter(upos %in% c("ADJ", "ADV", "NOUN", "VERB")) %>%
+  cnlp_utils_tf(
+    doc_set = imdb$doc_id,
+    min_df = 0.001,
+    max_df = 1.0,
+    max_features = 10000,
+    doc_var = "doc_id",
+    token_var = "lemma"
+  )
+dim(X)
+
+X_train <- X[imdb$train_id == "train", ]
+y_train <- imdb$category[imdb$train_id == "train"]
+
+model <- cv.glmnet(
+  X_train,
+  y_train,
+  alpha = 0.9,
+  family = "multinomial",
+  nfolds = 3,
+  trace.it = TRUE,
+  relax = FALSE,
+  lambda.min.ratio = 0.01,
+  nlambda = 100
+)
+```
+```{r}
+imdb %>%
+  mutate(pred = as.vector(predict(model, newx = X, type = "class"))) %>%
+  group_by(train_id) %>%
+  summarize(class_rate = mean(category == pred))
+temp <- coef(model, s = model$lambda[14])
+beta <- Reduce(cbind, temp)
+beta <- beta[apply(beta != 0, 1, any),]
+colnames(beta) <- names(temp)
+beta
+```
+```{r}
+sm_kwic("ever", imdb$text, n = 15, ignore_case = TRUE, width = 30L)
+sm_kwic("pretty", imdb$text, n = 15, ignore_case = TRUE, width = 30L)
+```
+
+```{r}
+imdb %>%
+  mutate(pred = as.vector(predict(model, newx = X, type = "class"))) %>%
+  filter(train_id == "valid") %>%
+  filter(pred != category) %>%
+  sample_n(size = 10) %>%
+  mutate(text = stri_sub(text, 1, 500)) %>%
+  mutate(response = sprintf("%s => %s \n %s\n", category, pred, text)) %>%
+  use_series(response) %>%
+  stri_split(fixed = "\n") %>%
+  unlist() %>%
+  stri_wrap(width = 79) %>%
+  cat(sep = "\n")
+```
+```{r}
+pred_mat <- predict(model, newx = X, type = "response")[,,]
+imdb %>%
+  mutate(pred = colnames(pred_mat)[apply(pred_mat, 1, which.max)]) %>%
+  mutate(prob = apply(pred_mat, 1, max)) %>%
+  filter(train_id == "valid") %>%
+  group_by(category) %>%
+  arrange(desc(prob)) %>%
+  slice_head(n = 3) %>%
+  mutate(text = stri_sub(text, 1, 500)) %>%
+  mutate(
+    response = sprintf("%s => %s (%0.5f) \n %s\n", category, pred, prob, text)
+  ) %>%
+  use_series(response) %>%
+  stri_split(fixed = "\n") %>%
+  unlist() %>%
+  stri_wrap(width = 79) %>%
+  cat(sep = "\n")
+```
+
+
+```{r}
+#Using bigrams
+
+X <- token %>%
+  sm_ngram(n = 2, n_min = 1, doc_var = "doc_id", token_var = "lemma") %>%
+  cnlp_utils_tf(
+    doc_set = imdb$doc_id,
+    min_df = 0.001,
+    max_df = 1.0,
+    max_features = 10000,
+    doc_var = "doc_id",
+    token_var = "token"
+  )
+X_train <- X[imdb$train_id == "train", ]
+y_train <- imdb$category[imdb$train_id == "train"]
+
+model <- cv.glmnet(
+  X_train,
+  y_train,
+  alpha = 0.9,
+  family = "multinomial",
+  nfolds = 3,
+  trace.it = TRUE,
+  relax = FALSE,
+  lambda.min.ratio = 0.01,
+  nlambda = 100
+)
+imdb %>%
+  mutate(pred = as.vector(predict(model, newx = X, type = "class"))) %>%
+  group_by(train_id) %>%
+  summarize(class_rate = mean(category == pred))
+
+temp <- coef(model, s = model$lambda[14])
+beta <- Reduce(cbind, temp)
+beta <- beta[apply(beta != 0, 1, any),]
+colnames(beta) <- names(temp)
+beta
+```
+
+
+```{r}
+sm_kwic("ever", imdb$text, n = 15, ignore_case = TRUE, width = 30L)
+```
+```{r}
+sm_kwic("pretty", imdb$text, n = 15, ignore_case = TRUE, width = 30L)
+```
+```{r}
+misclassified <- imdb %>%
+  mutate(pred = as.vector(predict(model, newx = X, type = "class"))) %>%
+  filter(pred != category) 
+
+X_2 <- token %>%
+  semi_join(misclassified,by="doc_id") %>%
+  sm_ngram(n = 2, n_min = 1, doc_var = "doc_id", token_var = "lemma") %>%
+  cnlp_utils_tf(
+    doc_set = misclassified$doc_id,
+    min_df = 0.001,
+    max_df = 1.0,
+    max_features = 10000,
+    doc_var = "doc_id",
+    token_var = "token"
+  )
+X_train <- X_2[misclassified$train_id == "train", ]
+y_train <- misclassified$category[misclassified$train_id == "train"]
+
+model_2 <- cv.glmnet(
+  X_train,
+  y_train,
+  alpha = 0.9,
+  family = "multinomial",
+  nfolds = 10,
+  trace.it = TRUE,
+  relax = FALSE,
+  lambda.min.ratio = 0.01,
+  nlambda = 100
+)
+misclassified %>%
+  mutate(pred = as.vector(predict(model_2, newx = X_2, type = "class"))) %>%
+  group_by(train_id) %>%
+  summarize(class_rate = mean(category == pred))
+
+
+misclassified %>%
+  mutate(pred = as.vector(predict(model_2, newx = X_2, type = "class"))) %>%
+  group_by(train_id) %>%
+  summarize(class_rate = mean(category == pred))
+
+temp <- coef(model_2, s = model_2$lambda[25])
+beta <- Reduce(cbind, temp)
+beta <- beta[apply(beta != 0, 1, any),]
+colnames(beta) <- names(temp)
+beta
+
+
+pred_mat <- predict(model_2, newx = X_2, type = "response")[,,]
+
+misclassified %>%
+  semi_join(misclassified,by="doc_id") %>%
+  mutate(pred = colnames(pred_mat)[apply(pred_mat, 1, which.max)]) %>%
+  mutate(prob = apply(pred_mat, 1, max)) %>%
+  filter(train_id == "valid") %>%
+  group_by(category) %>%
+  arrange(desc(prob)) %>%
+  slice_head(n = 3) %>%
+  mutate(text = stri_sub(text, 1, 500)) %>%
+  mutate(
+    response = sprintf("%s => %s (%0.5f) \n %s\n", category, pred, prob, text)
+  ) %>%
+  use_series(response) %>%
+  stri_split(fixed = "\n") %>%
+  unlist() %>%
+  stri_wrap(width = 79) %>%
+  cat(sep = "\n")
+```
+```{r}
+sm_kwic("ever", misclassified$text, n = 15, ignore_case = TRUE, width = 30L)
+
+```
+```{r}
+sm_kwic("but", misclassified$text, n = 15, ignore_case = TRUE, width = 30L)
+```
+```{r}
+sm_kwic("little", misclassified$text, n = 15, ignore_case = TRUE, width = 30L)
+```
+
+```{r}
+imdb %>%
+  mutate(pred = as.vector(predict(model, newx = X, type = "class"))) %>%
+  filter(train_id == "valid") %>%
+  filter(pred != category) %>%
+  sample_n(size = 10) %>%
+  mutate(text = stri_sub(text, 1, 500)) %>%
+  mutate(response = sprintf("%s => %s \n %s\n", category, pred, text)) %>%
+  use_series(response) %>%
+  stri_split(fixed = "\n") %>%
+  unlist() %>%
+  stri_wrap(width = 79) %>%
+  cat(sep = "\n")
+```
+```{r}
+pred_mat <- predict(model, newx = X, type = "response")[,,]
+imdb %>%
+  mutate(pred = colnames(pred_mat)[apply(pred_mat, 1, which.max)]) %>%
+  mutate(prob = apply(pred_mat, 1, max)) %>%
+  filter(train_id == "valid") %>%
+  group_by(category) %>%
+  arrange(desc(prob)) %>%
+  slice_head(n = 3) %>%
+  mutate(text = stri_sub(text, 1, 500)) %>%
+  mutate(
+    response = sprintf("%s => %s (%0.5f) \n %s\n", category, pred, prob, text)
+  ) %>%
+  use_series(response) %>%
+  stri_split(fixed = "\n") %>%
+  unlist() %>%
+  stri_wrap(width = 79) %>%
+  cat(sep = "\n")
+```
+```{r}
+X_cov <- imdb %>%
+  mutate(cnt_caps = stri_count(text, regex = "[A-Z]")) %>%
+  mutate(cnt_nums = stri_count(text, regex = "[0-9]")) %>%
+  model.frame(category ~ cnt_caps + cnt_nums -1, data = .) %>%
+  model.matrix(attr(., "terms"), .)
+X <- cbind(X_cov, X)
+
+X_train <- X[imdb$train_id == "train", ]
+y_train <- imdb$category[imdb$train_id == "train"]
+
+model <- cv.glmnet(
+  X_train,
+  y_train,
+  alpha = 0.9,
+  family = "multinomial",
+  nfolds = 3,
+  trace.it = TRUE,
+  relax = FALSE,
+  lambda.min.ratio = 0.01,
+  nlambda = 100
+)
+model <- cv.glmnet(
+  X_train,
+  y_train,
+  alpha = 0.9,
+  family = "multinomial",
+  nfolds = 3,
+  trace.it = TRUE,
+  relax = FALSE,
+  lambda.min.ratio = 0.01,
+  nlambda = 100
+)
+imdb %>%
+  mutate(pred = as.vector(predict(model, newx = X, type = "class"))) %>%
+  group_by(train_id) %>%
+  summarize(class_rate = mean(category == pred))
+
+temp <- coef(model, s = model$lambda[20])
+beta <- Reduce(cbind, temp)
+beta <- beta[apply(beta != 0, 1, any),]
+colnames(beta) <- names(temp)
+beta
+
+sm_kwic("ever", imdb$text, n = 15, ignore_case = TRUE, width = 30L)
+sm_kwic("pretty", imdb$text, n = 15, ignore_case = TRUE, width = 30L)
+
+
+imdb %>%
+  mutate(pred = as.vector(predict(model, newx = X, type = "class"))) %>%
+  filter(train_id == "valid") %>%
+  filter(pred != category) %>%
+  sample_n(size = 10) %>%
+  mutate(text = stri_sub(text, 1, 500)) %>%
+  mutate(response = sprintf("%s => %s \n %s\n", category, pred, text)) %>%
+  use_series(response) %>%
+  stri_split(fixed = "\n") %>%
+  unlist() %>%
+  stri_wrap(width = 79) %>%
+  cat(sep = "\n")
+```
+```{r}
+
+```
+```{r}
+
+```
+
+

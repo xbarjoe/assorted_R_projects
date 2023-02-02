@@ -1,0 +1,139 @@
+
+```{r, include=FALSE, message=FALSE}
+library(tidyverse)
+library(ggrepel)
+library(ggplot2)
+library(smodels)
+library(stringi)
+library(Matrix)
+library(glmnet)
+library(cleanNLP)
+library(magrittr)
+library(keras)
+library(tm)
+library(dplyr)
+#install_keras()
+theme_set(theme_minimal())
+options(dplyr.summarise.inform = FALSE)
+```
+
+# Load and Download the Data
+
+```{r, message=FALSE}
+dname <- "video_games"  # put the name assigned to your group here
+
+dir.create("data", showWarnings = FALSE)
+url_base <- "./data-amazon/class"
+f_corpus <- file.path("data", sprintf("%s.csv.gz", dname))
+f_tokens <- file.path("data", sprintf("%s_token.csv.gz", dname))
+u_corpus <- sprintf("%s/%s.csv.gz", url_base, dname)
+u_tokens <- sprintf("%s/%s_token.csv.gz", url_base, dname)
+if (!file.exists(f_corpus)) { download.file(u_corpus, f_corpus) }
+if (!file.exists(f_tokens)) { download.file(u_tokens, f_tokens) }
+
+amazon <- read_csv(f_corpus)
+token <- read_csv(f_tokens)
+```
+```{r}
+startable <- table(amazon$stars)
+#(relFreq <- prop.table(startable))
+#barplot(startable,main="Review Stars")
+df <- as.data.frame(startable)
+#df
+colsum=sum(df$Freq)
+#colsum
+ggplot(df, aes("", Freq, fill = Var1)) +
+    geom_bar(width = 1, size = 1, color = "white", stat = "identity") +
+    coord_polar("y") +
+    geom_text(aes(label = paste0(round(Freq*100/colsum), "%")), 
+              position = position_stack(vjust = 0.5)) +
+    labs(x = NULL, y = NULL, fill = NULL, 
+         title = "Reviews: Star Proportion (Rounded)") +
+    guides(fill = guide_legend(reverse = TRUE)) +
+    theme_classic() +
+    theme(axis.line = element_blank(),
+          axis.text = element_blank(),
+          axis.ticks = element_blank(),
+          plot.title = element_text(hjust = 0.5, color = "#666666"))
+
+
+
+```
+```{r}
+df$Freq[1]+df$Freq[2]
+```
+
+
+
+
+
+
+
+```{r}
+amazon <- amazon %>% mutate(train_id = if_else(runif(n()) < 0.6, "train", "valid"))
+
+#amazon
+```
+
+```{r}
+X <- token %>%
+  filter(upos %in% c("ADJ", "ADV")) %>%
+  cnlp_utils_tf(
+    doc_set = token$doc_id,
+    min_df = 0.1,
+    max_df = 1.0,
+    max_features = 2000,
+    doc_var = "doc_id",
+    token_var = "lemma"
+  )
+```
+```{r}
+X <- scale(as.matrix(X))
+
+
+Y <- amazon$user_id
+author_set <- unique(amazon$user_id)
+y <- (match(amazon$user_id, author_set) - 1L)
+Y <- to_categorical(y,25)
+
+y_train <- Y[amazon$train_id == "train",]
+y_valid <- Y[amazon$train_id == "valid",]
+X_train <- X[amazon$train_id == "train",]
+X_valid <- X[amazon$train_id == "valid",]
+```
+
+```{r}
+
+model <- keras_model_sequential() 
+model %>% 
+  
+  layer_dense(units = 16384,activation = 'relu',input_shape = c(ncol(X))) %>%
+  layer_dropout(rate = 0.2) %>% 
+  layer_dense(units = 4096, activation = 'sigmoid') %>%
+  layer_dropout(rate = 0.1) %>% 
+  layer_dense(units = 2048, activation = 'sigmoid') %>%
+  layer_dropout(rate = 0.1) %>% 
+  layer_dense(units = 512, activation = 'sigmoid') %>%
+  layer_dropout(rate = 0.2) %>% 
+  layer_dense(units = 256, activation = 'sigmoid') %>%
+  layer_dropout(rate = 0.2) %>% 
+  layer_dense(units = 25, activation = 'softmax')
+
+model %>% compile(
+  loss = 'categorical_crossentropy',
+  optimizer = optimizer_adam(),
+  metrics = c('accuracy')
+)
+
+history <- model %>% fit(
+  X_train, y_train, 
+  epochs = 5, batch_size = 32, 
+  validation_split = 0.2
+)
+```
+```{r}
+
+```
+
+
+# Project Code

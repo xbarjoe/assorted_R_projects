@@ -1,0 +1,176 @@
+
+```{r, include=FALSE, message=FALSE}
+library(tidyverse)
+library(ggrepel)
+library(smodels)
+library(stringi)
+library(Matrix)
+library(glmnet)
+library(cleanNLP)
+library(magrittr)
+
+source("topic.R")
+theme_set(theme_minimal())
+options(dplyr.summarise.inform = FALSE)
+```
+
+# Load and Download the Data
+
+```{r, message=FALSE}
+wiki <- read_csv(file.path("data", "wiki.csv")) %>%
+mutate(train_id = if_else(runif(n()) < 0.6, "train", "valid"))
+token <- read_csv(file.path("data", "wiki_token.csv.gz"))
+token
+```
+
+# Project Code
+```{r}
+X <- token %>%
+  filter(upos %in% c("NOUN", "ADJ", "ADV")) %>%
+  cnlp_utils_tf(min_df = 0.001, max_df = 0.5, doc_set = wiki$doc_id)
+
+topic_model <- sm_lda_topics(X, num_topics = 16)
+
+topic_docs <- topic_model$docs
+topic_terms <- topic_model$terms
+
+topic_docs %>%
+  arrange(topic, desc(prob)) %>%
+  group_by(topic) %>%
+  slice_head(n = 10) %>%
+  group_by(topic) %>%
+  mutate(doc_id = paste(topic, doc_id, sep = " => ")) %>%
+  use_series(doc_id)
+
+topic_terms %>%
+  arrange(topic, desc(beta)) %>%
+  group_by(topic) %>%
+  slice_head(n = 10) %>%
+  group_by(topic) %>%
+  summarize(sm_paste(token))
+```
+
+```{r}
+X <- token %>%
+  cnlp_utils_tf(
+    doc_set = unique(token$doc_id),
+    min_df = 0.001,
+    max_df = 1.0,
+    max_features = 10000,
+    doc_var = "doc_id",
+    token_var = "token"
+  )
+
+dim(X)
+```
+```{r}
+tibble(
+  docs = rownames(X),
+  asian = as.numeric(X[,"Technology"]),
+  beer = as.numeric(X[,"Microsoft"])
+) %>%
+  filter(docs != "Other") %>%
+  ggplot(aes(asian, beer)) +
+    geom_point(color = "grey85") +
+    geom_text_repel(aes(label = docs), max.overlaps = 779) +
+    scale_x_continuous(limits = c(-1, NA)) +
+    scale_y_continuous(limits = c(-1, NA))
+```
+```{r}
+token %>%
+  cnlp_utils_tfidf(doc_var = "doc_id", token_var = "lemma") %>%
+  sm_tidy_angle_distance() %>%
+  filter(document1 < document2) %>%
+  group_by(document1) %>%
+  arrange(distance) %>%
+  slice_head(n = 1) %>%
+  ungroup() %>%
+  arrange(distance)
+```
+```{r}
+token %>%
+  cnlp_utils_tfidf(
+    doc_set = unique(token$doc_id),
+    min_df = 0.001,
+    max_df = 1.0,
+    max_features = 10000,
+    doc_var = "doc_id",
+    token_var = "token"
+  ) %>%
+  sm_tidy_pca(n = 4) %>%
+  ggplot(aes(x = v1, y = v2)) +
+    geom_point(color = "grey90") +
+    geom_text_repel(
+      aes(label = document),
+      show.legend = TRUE,
+      max.overlaps = 30
+    ) +
+    theme_void()
+```
+```{r}
+token %>%
+  cnlp_utils_tfidf(doc_var = "doc_id", token_var = "lemma") %>%
+  sm_tidy_pca(n = 2) %>%
+  sm_kmeans(clusters = 2) %>%
+  ggplot(aes(v1, v2)) +
+    geom_point(aes(color = factor(cluster))) +
+    scale_color_viridis_d()
+```
+```{r}
+set.seed(2048)
+clusters <- token %>%
+  cnlp_utils_tf(
+    doc_set = unique(token$doc_id),
+    #min_df = 0.001,
+    #max_df = 1.0,
+    #max_features = 10000,
+    doc_var = "doc_id",
+    token_var = "token"
+  ) %>%
+  sm_tidy_pca(n = 2) %>%
+  sm_kmeans(clusters = 2)
+
+clusters %>%
+  ggplot(aes(x = v1, y = v2)) +
+    geom_point(aes(color = factor(cluster))) +
+    geom_text_repel(
+      aes(label = document),
+      show.legend = FALSE,
+      max.overlaps = 20,
+      size = 2
+    ) +
+    labs(color = "Cluster Number") +
+    scale_color_viridis_d() +
+    theme_void()
+```
+```{r}
+X <- token %>%
+  filter(upos %in% c("NOUN", "ADJ", "ADV")) %>%
+  cnlp_utils_tf(min_df = 0.001, max_df = 0.5, doc_set = wiki$doc_id)
+
+topic_model <- sm_lda_topics(X, num_topics = 16)
+
+topic_docs <- topic_model$docs
+topic_terms <- topic_model$terms
+
+topic_docs %>%
+  arrange(topic, desc(prob)) %>%
+  group_by(topic) %>%
+  slice_head(n = 10) %>%
+  group_by(topic) %>%
+  mutate(doc_id = paste(topic, doc_id, sep = " => ")) %>%
+  use_series(doc_id)
+
+topic_terms %>%
+  arrange(topic, desc(beta)) %>%
+  group_by(topic) %>%
+  slice_head(n = 10) %>%
+  group_by(topic) %>%
+  summarize(sm_paste(token))
+```
+```{r}
+source("topic.R")
+topic_json <- topics_create_json(topic_docs, topic_terms, wiki, truncate = 1000L)
+write_json(topic_json, "wiki-topics.json")
+```
+
